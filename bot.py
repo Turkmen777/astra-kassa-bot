@@ -12,12 +12,16 @@ logger = logging.getLogger(__name__)
 # Инициализация Flask
 app = Flask(__name__)
 
-# ================ ВАЖНО: ЗАМЕНИТЕ ЭТИ ДВЕ СТРОЧКИ ================
-# Токен вашего бота (получите у @BotFather)
-TOKEN = '8607427844:AAFloUJdBWJConJPBpPABuUQOXdjo1qRS44'  # ← ВСТАВЬТЕ СВОЙ ТОКЕН СЮДА!
+# ================ БЕРЁМ ДАННЫЕ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ================
+# Токен вашего бота (нужно добавить в Bothost)
+TOKEN = os.environ.get('TOKEN', '')  # Будет брать из переменных окружения
 # ID группы администраторов
-GROUP_ID = -1003759188641  # ← ВСТАВЬТЕ СВОЙ ID ГРУППЫ СЮДА!
-# =================================================================
+GROUP_ID = int(os.environ.get('GROUP_ID', '-1003759188641'))  # Ваш ID группы
+
+# Проверяем, что токен есть
+if not TOKEN:
+    logger.error("ТОКЕН НЕ НАЙДЕН! Добавьте TOKEN в переменные окружения Bothost")
+    TOKEN = "8607427844:AAFloUJdBWJConJPBpPABuUQOXdjo1qRS44"  # Замените на всякий случай
 
 # Инициализация бота
 bot = telegram.Bot(token=TOKEN)
@@ -231,7 +235,6 @@ def cancel(update, context):
 
 def handle_screenshot(update, context):
     """Обрабатывает получение скриншотов"""
-    user_id = update.effective_user.id
     if update.message.photo:
         photo = update.message.photo[-1]
         file_id = photo.file_id
@@ -247,65 +250,11 @@ def handle_screenshot(update, context):
     else:
         update.message.reply_text("❌ Surat ugradyň!")
 
-# ================ НАСТРОЙКА ОБРАБОТЧИКОВ ================
-
-def setup_dispatcher():
-    """Создаёт и настраивает диспетчер"""
-    dispatcher = Dispatcher(bot, None, workers=0)
-    
-    # Обработчик диалога пополнения
-    deposit_conv = ConversationHandler(
-        entry_points=[MessageHandler(Filters.regex('^💰 Hasaby doldurmak$'), deposit_start)],
-        states={
-            PHONE_INPUT: [MessageHandler(Filters.text & ~Filters.command, deposit_phone)],
-            AMOUNT_INPUT: [MessageHandler(Filters.text & ~Filters.command, deposit_amount)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    
-    # Обработчик диалога вывода
-    withdraw_conv = ConversationHandler(
-        entry_points=[MessageHandler(Filters.regex('^💸 Pul çykarmak$'), withdraw_start)],
-        states={
-            WITHDRAW_PHONE_INPUT: [MessageHandler(Filters.text & ~Filters.command, withdraw_phone)],
-            WITHDRAW_AMOUNT_INPUT: [MessageHandler(Filters.text & ~Filters.command, withdraw_amount)],
-            WITHDRAW_RECEIPT_INPUT: [MessageHandler(Filters.text & ~Filters.command, withdraw_receipt)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    
-    dispatcher.add_handler(CommandHandler('start', start))
-    dispatcher.add_handler(deposit_conv)
-    dispatcher.add_handler(withdraw_conv)
-    dispatcher.add_handler(MessageHandler(Filters.photo, handle_screenshot))
-    
-    return dispatcher
-
-# Создаём диспетчер
-dispatcher = setup_dispatcher()
-
-# ================ ВЕБХУК ================
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    """Точка входа для вебхуков Telegram"""
-    update = telegram.Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
-    return jsonify({'status': 'ok'})
-
-@app.route('/')
-def index():
-    return 'Astra Kassa Bot is running!'
-
-if __name__ == '__main__':
-    app.run()
-
-# Обработка сообщений из группы (админы отправляют номера)
 def handle_group_messages(update, context):
     """Обрабатывает сообщения из группы"""
     if update.message.chat_id == GROUP_ID:
         if update.message.reply_to_message:
-            original_text = update.message.reply_to_message.text
+            original_text = update.message.reply_to_message.text or ""
             
             match = re.search(r'ID: (\d+)', original_text)
             if match:
@@ -332,5 +281,55 @@ def handle_group_messages(update, context):
                     )
                     update.message.reply_text("✅ Ulanyja habar ugradyldy")
 
-# Добавляем обработчик сообщений из группы
+# ================ НАСТРОЙКА ДИСПЕТЧЕРА ================
+
+# Создаём диспетчер
+dispatcher = Dispatcher(bot, None, workers=4)  # workers=4 для обработки нескольких сообщений
+
+# Обработчик диалога пополнения
+deposit_conv = ConversationHandler(
+    entry_points=[MessageHandler(Filters.regex('^💰 Hasaby doldurmak$'), deposit_start)],
+    states={
+        PHONE_INPUT: [MessageHandler(Filters.text & ~Filters.command, deposit_phone)],
+        AMOUNT_INPUT: [MessageHandler(Filters.text & ~Filters.command, deposit_amount)],
+    },
+    fallbacks=[CommandHandler('cancel', cancel)]
+)
+
+# Обработчик диалога вывода
+withdraw_conv = ConversationHandler(
+    entry_points=[MessageHandler(Filters.regex('^💸 Pul çykarmak$'), withdraw_start)],
+    states={
+        WITHDRAW_PHONE_INPUT: [MessageHandler(Filters.text & ~Filters.command, withdraw_phone)],
+        WITHDRAW_AMOUNT_INPUT: [MessageHandler(Filters.text & ~Filters.command, withdraw_amount)],
+        WITHDRAW_RECEIPT_INPUT: [MessageHandler(Filters.text & ~Filters.command, withdraw_receipt)],
+    },
+    fallbacks=[CommandHandler('cancel', cancel)]
+)
+
+# Добавляем обработчики
+dispatcher.add_handler(CommandHandler('start', start))
+dispatcher.add_handler(deposit_conv)
+dispatcher.add_handler(withdraw_conv)
+dispatcher.add_handler(MessageHandler(Filters.photo, handle_screenshot))
 dispatcher.add_handler(MessageHandler(Filters.chat(GROUP_ID) & Filters.text, handle_group_messages))
+
+# ================ ВЕБХУК ================
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Точка входа для вебхуков Telegram"""
+    update = telegram.Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return jsonify({'status': 'ok'})
+
+@app.route('/')
+def index():
+    return 'Astra Kassa Bot is running!'
+
+# ================ ЗАПУСК ================
+
+if __name__ == '__main__':
+    # Для Bothost нужно слушать все интерфейсы
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
