@@ -1,9 +1,9 @@
 import logging
-import os
 from flask import Flask, request, jsonify
 import telegram
 from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, ConversationHandler
 import re
+import os
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -12,19 +12,17 @@ logger = logging.getLogger(__name__)
 # Инициализация Flask
 app = Flask(__name__)
 
-# Получаем токен и ID группы из переменных окружения (которые вы настроите в Bothost)
-TOKEN = os.environ.get('8607427844:AAEI-DnlKJs-iXIsr6XFjFsQjsYZCzwfOw0')
-GROUP_ID = int(os.environ.get('GROUP_ID', '-1003759188641'))
-
-# Проверяем, что токен получен
-if not TOKEN:
-    logger.error("Токен не найден! Добавьте TOKEN в переменные окружения Bothost.")
-    TOKEN = "8607427844:AAEI-DnlKJs-iXIsr6XFjFsQjsYZCzwfOw0"  # временно для теста, но лучше использовать переменные окружения
+# ================ ВАЖНО: ЗАМЕНИТЕ ЭТИ ДВЕ СТРОЧКИ ================
+# Токен вашего бота (получите у @BotFather)
+TOKEN = '8607427844:AAFloUJdBWJConJPBpPABuUQOXdjo1qRS44'  # ← ВСТАВЬТЕ СВОЙ ТОКЕН СЮДА!
+# ID группы администраторов
+GROUP_ID = -1003759188641  # ← ВСТАВЬТЕ СВОЙ ID ГРУППЫ СЮДА!
+# =================================================================
 
 # Инициализация бота
 bot = telegram.Bot(token=TOKEN)
 
-# Состояния для ConversationHandler
+# Состояния для разговоров
 (PHONE_INPUT, AMOUNT_INPUT, WITHDRAW_PHONE_INPUT, 
  WITHDRAW_AMOUNT_INPUT, WITHDRAW_RECEIPT_INPUT) = range(5)
 
@@ -48,11 +46,11 @@ def validate_amount(text):
 def validate_phone(text):
     """Проверяет номер телефона (+993 и 8 цифр)"""
     clean_text = re.sub(r'[\s\-\(\)]', '', text)
-    if re.match(r'^\+993\d{8}$', clean_text):  # +99365123456
+    if re.match(r'^\+993\d{8}$', clean_text):
         return True
-    elif re.match(r'^993\d{8}$', clean_text):  # 99365123456
+    elif re.match(r'^993\d{8}$', clean_text):
         return True
-    elif re.match(r'^\d{8}$', clean_text):  # 65123456
+    elif re.match(r'^\d{8}$', clean_text):
         return True
     return False
 
@@ -139,7 +137,7 @@ def deposit_amount(update, context):
             "Tölegiňizi geçireniňizden soň, skrinşoty ugratmagy unutmaň."
         )
         
-        # Очищаем данные пользователя
+        # Очищаем данные
         del user_data[user_id]
         return ConversationHandler.END
     else:
@@ -213,7 +211,6 @@ def withdraw_receipt(update, context):
             "Administratorlar tizara habarlaşarlar."
         )
         
-        # Очищаем данные пользователя
         del user_data[user_id]
         return ConversationHandler.END
     else:
@@ -234,6 +231,7 @@ def cancel(update, context):
 
 def handle_screenshot(update, context):
     """Обрабатывает получение скриншотов"""
+    user_id = update.effective_user.id
     if update.message.photo:
         photo = update.message.photo[-1]
         file_id = photo.file_id
@@ -283,6 +281,7 @@ def setup_dispatcher():
     
     return dispatcher
 
+# Создаём диспетчер
 dispatcher = setup_dispatcher()
 
 # ================ ВЕБХУК ================
@@ -290,18 +289,48 @@ dispatcher = setup_dispatcher()
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Точка входа для вебхуков Telegram"""
-    try:
-        update = telegram.Update.de_json(request.get_json(force=True), bot)
-        dispatcher.process_update(update)
-        return jsonify({'status': 'ok'})
-    except Exception as e:
-        logger.error(f"Ошибка в webhook: {e}")
-        return jsonify({'status': 'error', 'message': str(e)})
+    update = telegram.Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return jsonify({'status': 'ok'})
 
 @app.route('/')
 def index():
     return 'Astra Kassa Bot is running!'
 
-# Для локального тестирования
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run()
+
+# Обработка сообщений из группы (админы отправляют номера)
+def handle_group_messages(update, context):
+    """Обрабатывает сообщения из группы"""
+    if update.message.chat_id == GROUP_ID:
+        if update.message.reply_to_message:
+            original_text = update.message.reply_to_message.text
+            
+            match = re.search(r'ID: (\d+)', original_text)
+            if match:
+                user_id = int(match.group(1))
+                admin_message = update.message.text.strip()
+                
+                if validate_phone(admin_message):
+                    phone = format_phone(admin_message)
+                    bot.send_message(
+                        chat_id=user_id,
+                        text=(
+                            f"📞 Töleg maglumatlary:\n\n"
+                            f"Pul geçirmeli nomer:\n"
+                            f"{phone}\n\n"
+                            f"Pul geçireniňizden soň, skrinşoty ugradyň."
+                        )
+                    )
+                    update.message.reply_text("✅ Nomer ulanyja ugradyldy")
+                
+                elif "Pul geçirildi" in admin_message or "tassyklan" in admin_message.lower():
+                    bot.send_message(
+                        chat_id=user_id,
+                        text="✅ Pul geçirildi! Tassyklama üçin administratorlar bilen habarlaşyň."
+                    )
+                    update.message.reply_text("✅ Ulanyja habar ugradyldy")
+
+# Добавляем обработчик сообщений из группы
+dispatcher.add_handler(MessageHandler(Filters.chat(GROUP_ID) & Filters.text, handle_group_messages))
