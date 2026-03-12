@@ -1,9 +1,9 @@
 import logging
+import os
 from flask import Flask, request, jsonify
 import telegram
 from telegram.ext import Dispatcher, CommandHandler, MessageHandler, Filters, ConversationHandler
 import re
-import os
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -12,10 +12,14 @@ logger = logging.getLogger(__name__)
 # Инициализация Flask
 app = Flask(__name__)
 
-# Токен вашего бота (получите у @BotFather)
-TOKEN = '8607427844:AAEI-DnlKJs-iXIsr6XFjFsQjsYZCzwfOw0'  # ← ВСТАВЬТЕ СЮДА ВАШ ТОКЕН!
-# ID группы администраторов
-GROUP_ID = -1003759188641  # ← ВАШ ID ГРУППЫ!
+# Получаем токен и ID группы из переменных окружения (которые вы настроите в Bothost)
+TOKEN = os.environ.get('8607427844:AAEI-DnlKJs-iXIsr6XFjFsQjsYZCzwfOw0')
+GROUP_ID = int(os.environ.get('GROUP_ID', '-1003759188641'))
+
+# Проверяем, что токен получен
+if not TOKEN:
+    logger.error("Токен не найден! Добавьте TOKEN в переменные окружения Bothost.")
+    TOKEN = "8607427844:AAEI-DnlKJs-iXIsr6XFjFsQjsYZCzwfOw0"  # временно для теста, но лучше использовать переменные окружения
 
 # Инициализация бота
 bot = telegram.Bot(token=TOKEN)
@@ -135,6 +139,8 @@ def deposit_amount(update, context):
             "Tölegiňizi geçireniňizden soň, skrinşoty ugratmagy unutmaň."
         )
         
+        # Очищаем данные пользователя
+        del user_data[user_id]
         return ConversationHandler.END
     else:
         update.message.reply_text("❌ Ýalňyş summa! Iň az 30 TMT bolmaly.\nTäzeden ýazyň:")
@@ -207,6 +213,8 @@ def withdraw_receipt(update, context):
             "Administratorlar tizara habarlaşarlar."
         )
         
+        # Очищаем данные пользователя
+        del user_data[user_id]
         return ConversationHandler.END
     else:
         update.message.reply_text(
@@ -226,7 +234,6 @@ def cancel(update, context):
 
 def handle_screenshot(update, context):
     """Обрабатывает получение скриншотов"""
-    user_id = update.effective_user.id
     if update.message.photo:
         photo = update.message.photo[-1]
         file_id = photo.file_id
@@ -283,13 +290,18 @@ dispatcher = setup_dispatcher()
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Точка входа для вебхуков Telegram"""
-    update = telegram.Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
-    return jsonify({'status': 'ok'})
+    try:
+        update = telegram.Update.de_json(request.get_json(force=True), bot)
+        dispatcher.process_update(update)
+        return jsonify({'status': 'ok'})
+    except Exception as e:
+        logger.error(f"Ошибка в webhook: {e}")
+        return jsonify({'status': 'error', 'message': str(e)})
 
 @app.route('/')
 def index():
     return 'Astra Kassa Bot is running!'
 
+# Для локального тестирования
 if __name__ == '__main__':
-    app.run()
+    app.run(host='0.0.0.0', port=5000)
